@@ -1,0 +1,36 @@
+# AAROGYA LINK — Root .gitignore
+
+# Node modules
+**/node_modules/
+
+# Environment files (never commit)
+**/.env
+!**/.env.example
+
+# Expo
+mobile/.expo/
+mobile/dist/
+mobile/web-build/
+mobile/.expo-shared/
+
+# Build artifacts
+mobile/android/
+mobile/ios/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/*.log
+*.swp
+*.swo
+
+# EAS
+mobile/eas-update/
+
