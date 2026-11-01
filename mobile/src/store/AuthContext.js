@@ -1,7 +1,8 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
 import { authAPI } from '../services/api';
 import { dbGet, dbRun } from '../database';
+import { safeStorage } from '../utils/storage';
 
 const AuthContext = createContext(null);
 
@@ -58,13 +59,10 @@ const DEMO_ACCOUNTS = {
     role: 'pharmacy',
     state: 'Assam',
     district: 'Kamrup Rural',
-    village: 'Market Road',
+    village: 'Kalyanpur',
     isVerified: true,
     verificationStatus: 'approved',
-    profileData: {
-      licenseNumber: 'DL-AS-2023-9091',
-      pharmacistName: 'Kamal Nath (D.Pharm)',
-    },
+    profileData: { licenseNumber: 'AS-DRUG-2024-0142' },
   },
   '9000000005': {
     _id: 'demo_admin_01',
@@ -91,8 +89,8 @@ export const AuthProvider = ({ children }) => {
 
   const loadStoredAuth = async () => {
     try {
-      const storedToken = await SecureStore.getItemAsync('authToken');
-      const storedUser = await SecureStore.getItemAsync('userData');
+      const storedToken = await safeStorage.getItem('authToken');
+      const storedUser = await safeStorage.getItem('userData');
       if (storedToken && storedUser) {
         setToken(storedToken);
         setUser(JSON.parse(storedUser));
@@ -108,47 +106,49 @@ export const AuthProvider = ({ children }) => {
     try {
       const response = await authAPI.login(credentials);
       const { token: newToken, user: userData } = response.data;
-      await SecureStore.setItemAsync('authToken', newToken);
-      await SecureStore.setItemAsync('userData', JSON.stringify(userData));
+      await safeStorage.setItem('authToken', newToken);
+      await safeStorage.setItem('userData', JSON.stringify(userData));
       setToken(newToken);
       setUser(userData);
       return userData;
     } catch (err) {
-      const isNetworkFail = !err.response || err.code === 'ECONNABORTED' || err.message?.includes('Network Error');
+      const isNetworkFail = !err.response || err.code === 'ECONNABORTED' || err.message?.includes('Network Error') || err.message?.includes('unavailable');
 
       if (isNetworkFail) {
         // Fallback: Check built-in demo credentials
         const demo = DEMO_ACCOUNTS[credentials.identifier];
         if (demo) {
           const offlineToken = `offline_jwt_${demo.role}_${Date.now()}`;
-          await SecureStore.setItemAsync('authToken', offlineToken);
-          await SecureStore.setItemAsync('userData', JSON.stringify(demo));
+          await safeStorage.setItem('authToken', offlineToken);
+          await safeStorage.setItem('userData', JSON.stringify(demo));
           setToken(offlineToken);
           setUser(demo);
           return { ...demo, isOfflineLogin: true };
         }
 
-        // Fallback: Check local SQLite database
-        try {
-          const localRow = await dbGet(
-            'SELECT * FROM users WHERE mobile = ? OR email = ?',
-            [credentials.identifier, credentials.identifier]
-          );
-          if (localRow) {
-            const localUser = {
-              ...localRow,
-              _id: localRow.id,
-              profileData: localRow.profile_data ? JSON.parse(localRow.profile_data) : {},
-            };
-            const offlineToken = `offline_jwt_${localUser.role}_${Date.now()}`;
-            await SecureStore.setItemAsync('authToken', offlineToken);
-            await SecureStore.setItemAsync('userData', JSON.stringify(localUser));
-            setToken(offlineToken);
-            setUser(localUser);
-            return { ...localUser, isOfflineLogin: true };
+        // Fallback: Check local SQLite database (native only)
+        if (Platform.OS !== 'web') {
+          try {
+            const localRow = await dbGet(
+              'SELECT * FROM users WHERE mobile = ? OR email = ?',
+              [credentials.identifier, credentials.identifier]
+            );
+            if (localRow) {
+              const localUser = {
+                ...localRow,
+                _id: localRow.id,
+                profileData: localRow.profile_data ? JSON.parse(localRow.profile_data) : {},
+              };
+              const offlineToken = `offline_jwt_${localUser.role}_${Date.now()}`;
+              await safeStorage.setItem('authToken', offlineToken);
+              await safeStorage.setItem('userData', JSON.stringify(localUser));
+              setToken(offlineToken);
+              setUser(localUser);
+              return { ...localUser, isOfflineLogin: true };
+            }
+          } catch (dbErr) {
+            console.log('Local DB user search error', dbErr);
           }
-        } catch (dbErr) {
-          console.log('Local DB user search error', dbErr);
         }
       }
 
@@ -160,16 +160,15 @@ export const AuthProvider = ({ children }) => {
     try {
       const response = await authAPI.signup(data);
       const { token: newToken, user: userData } = response.data;
-      await SecureStore.setItemAsync('authToken', newToken);
-      await SecureStore.setItemAsync('userData', JSON.stringify(userData));
+      await safeStorage.setItem('authToken', newToken);
+      await safeStorage.setItem('userData', JSON.stringify(userData));
       setToken(newToken);
       setUser(userData);
       return userData;
     } catch (err) {
-      const isNetworkFail = !err.response || err.code === 'ECONNABORTED' || err.message?.includes('Network Error');
+      const isNetworkFail = !err.response || err.code === 'ECONNABORTED' || err.message?.includes('Network Error') || err.message?.includes('unavailable');
 
       if (isNetworkFail) {
-        // Register locally in SQLite database and sync queue
         const localId = `local_usr_${Date.now()}`;
         const isDocOrPharma = data.role === 'doctor' || data.role === 'pharmacy';
         const localUserData = {
@@ -188,30 +187,32 @@ export const AuthProvider = ({ children }) => {
           isOfflineRegistration: true,
         };
 
-        try {
-          await dbRun(
-            `INSERT INTO users (id, name, mobile, email, role, state, district, village, profile_data, is_verified, sync_status)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
-            [
-              localId,
-              data.name,
-              data.mobile,
-              data.email || '',
-              data.role,
-              data.state || 'Assam',
-              data.district || '',
-              data.village || '',
-              JSON.stringify(localUserData.profileData),
-              isDocOrPharma ? 0 : 1,
-            ]
-          );
-        } catch (dbErr) {
-          console.log('Save local user to sqlite error', dbErr);
+        if (Platform.OS !== 'web') {
+          try {
+            await dbRun(
+              `INSERT INTO users (id, name, mobile, email, role, state, district, village, profile_data, is_verified, sync_status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+              [
+                localId,
+                data.name,
+                data.mobile,
+                data.email || '',
+                data.role,
+                data.state || 'Assam',
+                data.district || '',
+                data.village || '',
+                JSON.stringify(localUserData.profileData),
+                isDocOrPharma ? 0 : 1,
+              ]
+            );
+          } catch (dbErr) {
+            console.log('Save local user to sqlite error', dbErr);
+          }
         }
 
         const offlineToken = `offline_jwt_${data.role}_${Date.now()}`;
-        await SecureStore.setItemAsync('authToken', offlineToken);
-        await SecureStore.setItemAsync('userData', JSON.stringify(localUserData));
+        await safeStorage.setItem('authToken', offlineToken);
+        await safeStorage.setItem('userData', JSON.stringify(localUserData));
         setToken(offlineToken);
         setUser(localUserData);
         return localUserData;
@@ -225,13 +226,12 @@ export const AuthProvider = ({ children }) => {
     try {
       const response = await authAPI.googleAuth(googleData);
       const { token: newToken, user: userData } = response.data;
-      await SecureStore.setItemAsync('authToken', newToken);
-      await SecureStore.setItemAsync('userData', JSON.stringify(userData));
+      await safeStorage.setItem('authToken', newToken);
+      await safeStorage.setItem('userData', JSON.stringify(userData));
       setToken(newToken);
       setUser(userData);
       return userData;
     } catch (err) {
-      // Offline fallback for Google User
       const localId = `google_usr_${googleData.googleId || Date.now()}`;
       const isDocOrPharma = googleData.role === 'doctor' || googleData.role === 'pharmacy';
       const localGoogleUser = {
@@ -251,8 +251,8 @@ export const AuthProvider = ({ children }) => {
       };
 
       const offlineToken = `offline_jwt_google_${Date.now()}`;
-      await SecureStore.setItemAsync('authToken', offlineToken);
-      await SecureStore.setItemAsync('userData', JSON.stringify(localGoogleUser));
+      await safeStorage.setItem('authToken', offlineToken);
+      await safeStorage.setItem('userData', JSON.stringify(localGoogleUser));
       setToken(offlineToken);
       setUser(localGoogleUser);
       return localGoogleUser;
@@ -260,15 +260,15 @@ export const AuthProvider = ({ children }) => {
   };
 
   const logout = async () => {
-    await SecureStore.deleteItemAsync('authToken');
-    await SecureStore.deleteItemAsync('userData');
+    await safeStorage.deleteItem('authToken');
+    await safeStorage.deleteItem('userData');
     setToken(null);
     setUser(null);
   };
 
   const updateUser = async (updated) => {
     const merged = { ...user, ...updated };
-    await SecureStore.setItemAsync('userData', JSON.stringify(merged));
+    await safeStorage.setItem('userData', JSON.stringify(merged));
     setUser(merged);
   };
 

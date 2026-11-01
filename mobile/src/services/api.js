@@ -1,6 +1,6 @@
 import axios from 'axios';
-import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
+import { safeStorage } from '../utils/storage';
 import Constants from 'expo-constants';
 
 // Smart host detection: Web -> localhost, Real Phone via Expo -> LAN IP, Android Emulator -> 10.0.2.2
@@ -55,7 +55,7 @@ api.interceptors.request.use(
     }
 
     try {
-      const token = await SecureStore.getItemAsync('authToken');
+      const token = await safeStorage.getItem('authToken');
       if (token && !token.startsWith('offline_')) {
         config.headers.Authorization = `Bearer ${token}`;
       }
@@ -77,8 +77,8 @@ api.interceptors.response.use(
       lastFailTimestamp = Date.now();
     }
     if (error.response?.status === 401) {
-      await SecureStore.deleteItemAsync('authToken');
-      await SecureStore.deleteItemAsync('userData');
+      await safeStorage.deleteItem('authToken');
+      await safeStorage.deleteItem('userData');
     }
     return Promise.reject(error);
   }

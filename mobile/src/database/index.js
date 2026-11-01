@@ -1,9 +1,16 @@
-import * as SQLite from 'expo-sqlite';
+import { Platform } from 'react-native';
+
+// expo-sqlite is NOT available on web — lazy-load only on native
+let SQLite = null;
+if (Platform.OS !== 'web') {
+  SQLite = require('expo-sqlite');
+}
 
 let db = null;
 let initPromise = null;
 
 export const getDB = async () => {
+  if (Platform.OS === 'web') return null;
   if (!db) {
     db = await SQLite.openDatabaseAsync('aarogya_link.db');
   }
@@ -11,6 +18,7 @@ export const getDB = async () => {
 };
 
 export const initDatabase = async () => {
+  if (Platform.OS === 'web') return null;
   if (initPromise) return initPromise;
 
   initPromise = (async () => {
@@ -296,21 +304,24 @@ export const initDatabase = async () => {
 };
 
 // Generic helpers — always await initDatabase before executing
+// Returns null/[] on web (no SQLite available)
 export const dbRun = async (sql, params = []) => {
+  if (Platform.OS === 'web') return null;
   await initDatabase();
   const database = await getDB();
   return database.runAsync(sql, params);
 };
 
 export const dbGet = async (sql, params = []) => {
+  if (Platform.OS === 'web') return null;
   await initDatabase();
   const database = await getDB();
   return database.getFirstAsync(sql, params);
 };
 
 export const dbAll = async (sql, params = []) => {
+  if (Platform.OS === 'web') return [];
   await initDatabase();
   const database = await getDB();
   return database.getAllAsync(sql, params);
 };
-

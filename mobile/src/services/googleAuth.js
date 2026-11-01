@@ -1,9 +1,18 @@
-import * as WebBrowser from 'expo-web-browser';
-import * as Google from 'expo-auth-session/providers/google';
 import { useEffect, useState } from 'react';
 import { Alert, Platform } from 'react-native';
 
-WebBrowser.maybeCompleteAuthSession();
+// expo-web-browser and expo-auth-session are native-only
+// Lazy-load to prevent web bundle crashes
+let WebBrowser = null;
+let Google = null;
+
+if (Platform.OS !== 'web') {
+  try {
+    WebBrowser = require('expo-web-browser');
+    Google = require('expo-auth-session/providers/google');
+    WebBrowser.maybeCompleteAuthSession();
+  } catch (e) {}
+}
 
 // Check if user has provided real Google Cloud Client IDs in .env
 const ENV_ANDROID_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID;
@@ -21,7 +30,17 @@ const ANDROID_CLIENT_ID = ENV_ANDROID_CLIENT_ID || DUMMY_CLIENT_ID;
 const IOS_CLIENT_ID = ENV_IOS_CLIENT_ID || DUMMY_CLIENT_ID;
 const WEB_CLIENT_ID = ENV_WEB_CLIENT_ID || DUMMY_CLIENT_ID;
 
-export const useGoogleAuth = (onSuccess) => {
+// Web-safe hook — no native dependencies
+const useGoogleAuthWeb = (_onSuccess) => {
+  return {
+    signIn: async () => ({ isSimulationNeeded: true }),
+    loading: false,
+    isReady: false,
+  };
+};
+
+// Native hook — uses expo-auth-session
+const useGoogleAuthNative = (onSuccess) => {
   const [loading, setLoading] = useState(false);
 
   // useAuthRequest requires non-undefined client IDs for the active platform
@@ -70,7 +89,6 @@ export const useGoogleAuth = (onSuccess) => {
   };
 
   const signIn = async (preferredRole = 'patient') => {
-    // If real Google Cloud client IDs are configured in .env, trigger the OAuth web browser flow
     if (hasConfiguredGoogleOAuth) {
       setLoading(true);
       try {
@@ -80,8 +98,6 @@ export const useGoogleAuth = (onSuccess) => {
         Alert.alert('Google Sign-In', err.message || 'Unable to start Google Sign-In.');
       }
     } else {
-      // In development when Google Cloud credentials are not configured yet,
-      // return simulation flag so GoogleButton opens the account & role picker dialog
       setLoading(false);
       return { isSimulationNeeded: true };
     }
@@ -89,3 +105,8 @@ export const useGoogleAuth = (onSuccess) => {
 
   return { signIn, loading, isReady: !!request };
 };
+
+// Platform.OS is a build-time constant, so this branch is safe and consistent
+export const useGoogleAuth = Platform.OS === 'web' || !Google
+  ? useGoogleAuthWeb
+  : useGoogleAuthNative;

@@ -1,8 +1,16 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import NetInfo from '@react-native-community/netinfo';
+import { Platform } from 'react-native';
 import { dbAll, dbRun } from '../database';
 import { syncAPI } from '../services/api';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+
+let NetInfo = null;
+let AsyncStorage = null;
+
+// Safely load native-only modules
+if (Platform.OS !== 'web') {
+  try { NetInfo = require('@react-native-community/netinfo').default; } catch (e) {}
+  try { AsyncStorage = require('@react-native-async-storage/async-storage').default; } catch (e) {}
+}
 
 const SyncContext = createContext(null);
 
@@ -14,11 +22,12 @@ export const SyncProvider = ({ children }) => {
 
   useEffect(() => {
     let isMounted = true;
+    let unsubscribe = () => {};
 
     const initialize = async () => {
       try {
         await loadLastSyncTime();
-        if (isMounted) {
+        if (Platform.OS !== 'web' && isMounted) {
           await refreshPendingCount();
         }
       } catch (e) {
@@ -28,13 +37,15 @@ export const SyncProvider = ({ children }) => {
 
     initialize();
 
-    const unsubscribe = NetInfo.addEventListener(state => {
-      const online = state.isConnected && state.isInternetReachable !== false;
-      setIsOnline(online);
-      if (online && isMounted && pendingCount > 0) {
-        triggerSync();
-      }
-    });
+    if (Platform.OS !== 'web' && NetInfo) {
+      unsubscribe = NetInfo.addEventListener(state => {
+        const online = state.isConnected && state.isInternetReachable !== false;
+        setIsOnline(online);
+        if (online && isMounted && pendingCount > 0) {
+          triggerSync();
+        }
+      });
+    }
 
     return () => {
       isMounted = false;
@@ -43,11 +54,16 @@ export const SyncProvider = ({ children }) => {
   }, []);
 
   const loadLastSyncTime = async () => {
-    const t = await AsyncStorage.getItem('lastSyncTime');
-    setLastSyncTime(t);
+    try {
+      if (AsyncStorage) {
+        const t = await AsyncStorage.getItem('lastSyncTime');
+        setLastSyncTime(t);
+      }
+    } catch (e) {}
   };
 
   const refreshPendingCount = async () => {
+    if (Platform.OS === 'web') return;
     try {
       const rows = await dbAll(
         `SELECT COUNT(*) as cnt FROM sync_queue WHERE sync_status IN ('pending','failed')`
@@ -57,6 +73,7 @@ export const SyncProvider = ({ children }) => {
   };
 
   const enqueue = async (userId, recordId, operationType, tableName, payload) => {
+    if (Platform.OS === 'web') return;
     const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const now = new Date().toISOString();
     await dbRun(
@@ -69,6 +86,7 @@ export const SyncProvider = ({ children }) => {
   };
 
   const triggerSync = useCallback(async () => {
+    if (Platform.OS === 'web') return;
     if (isSyncing) return;
     setIsSyncing(true);
     try {
@@ -108,7 +126,9 @@ export const SyncProvider = ({ children }) => {
       }
 
       const now = new Date().toISOString();
-      await AsyncStorage.setItem('lastSyncTime', now);
+      if (AsyncStorage) {
+        await AsyncStorage.setItem('lastSyncTime', now);
+      }
       setLastSyncTime(now);
       await refreshPendingCount();
     } catch (e) {
@@ -138,4 +158,3 @@ export const useSync = () => {
   if (!ctx) throw new Error('useSync must be used within SyncProvider');
   return ctx;
 };
-

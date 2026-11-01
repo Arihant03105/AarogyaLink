@@ -1,6 +1,29 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
 import { translations } from './translations';
+
+// AsyncStorage is native-only — use localStorage on web
+let AsyncStorage = null;
+if (Platform.OS !== 'web') {
+  try { AsyncStorage = require('@react-native-async-storage/async-storage').default; } catch (e) { }
+}
+
+// Thin shim so usage code below doesn't need Platform checks
+const storage = {
+  getItem: async (key) => {
+    if (Platform.OS === 'web') {
+      return typeof window !== 'undefined' ? window.localStorage.getItem(key) : null;
+    }
+    return AsyncStorage ? AsyncStorage.getItem(key) : null;
+  },
+  setItem: async (key, value) => {
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined') window.localStorage.setItem(key, value);
+      return;
+    }
+    if (AsyncStorage) await AsyncStorage.setItem(key, value);
+  },
+};
 
 const I18nContext = createContext(null);
 
@@ -20,14 +43,14 @@ export const I18nProvider = ({ children }) => {
   const [language, setLanguage] = useState('en');
 
   useEffect(() => {
-    AsyncStorage.getItem('appLanguage').then(lang => {
+    storage.getItem('appLanguage').then(lang => {
       if (lang) setLanguage(lang);
     });
   }, []);
 
   const changeLanguage = async (lang) => {
     setLanguage(lang);
-    await AsyncStorage.setItem('appLanguage', lang);
+    await storage.setItem('appLanguage', lang);
   };
 
   const t = (key) => {
@@ -46,4 +69,3 @@ export const useI18n = () => {
   if (!ctx) throw new Error('useI18n must be used within I18nProvider');
   return ctx;
 };
-
